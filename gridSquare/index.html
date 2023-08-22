@@ -4,34 +4,28 @@
 
 <head>
   <meta charset="utf-8">
-  <title>WebGPU Life</title>
+  <title>03: Grid of Squares - WebGPU Life</title>
 </head>
 
 <body>
   <canvas width="512" height="512"></canvas>
-  <div>hihi</div>
   <script type="module">
+    const GRID_SIZE = 32;
+
     const canvas = document.querySelector("canvas");
-
-    // Your WebGPU code will begin here!
-
 
     if (!navigator.gpu) {
       throw new Error("WebGPU not supported on this browser.");
-      console.log('1');
-    } else {
-      console.log("2")
     }
 
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) {
       throw new Error("No appropriate GPUAdapter found.");
-    } else {
-      console.log(adapter)
     }
 
     const device = await adapter.requestDevice();
-    console.log(device)
+
+    // Canvas configuration
     const context = canvas.getContext("webgpu");
     const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
     context.configure({
@@ -39,16 +33,13 @@
       format: canvasFormat,
     });
 
-    ////here//////
-
     // Create a buffer with the vertices for a single cell.
     const vertices = new Float32Array([
-      //   X,    Y
-      -0.8, -0.8, // Triangle 1
+      -0.8, -0.8,
       0.8, -0.8,
       0.8, 0.8,
 
-      -0.8, -0.8, // Triangle 2
+      -0.8, -0.8,
       0.8, 0.8,
       -0.8, 0.8,
     ]);
@@ -72,15 +63,37 @@
     const cellShaderModule = device.createShaderModule({
       label: "Cell shader",
       code: `
+          struct VertexOutput {
+            @builtin(position) position: vec4f,
+            @location(0) cell: vec2f,
+          };
+
+          @group(0) @binding(0) var<uniform> grid: vec2f;
+
           @vertex
-          fn vertexMain(@location(0) position: vec2f)
-            -> @builtin(position) vec4f {
-            return vec4f(position, 0, 1);
+          fn vertexMain(@location(0) position: vec2f,
+                        @builtin(instance_index) instance: u32) -> VertexOutput {
+            let i = f32(instance);
+            let cell = vec2f(i % grid.x, floor(i / grid.x));
+
+            let cellOffset = cell / grid * 2;
+            let gridPos = (position+1) / grid - 1 + cellOffset;
+
+            var output: VertexOutput;
+            output.position = vec4f(gridPos, 0, 1);
+            output.cell = cell;
+            return output;
           }
 
           @fragment
-          fn fragmentMain() -> @location(0) vec4f {
-            return vec4f(1, 0, 0, 1);
+          fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+            let c = input.position;
+            if (c.x < 0.5 && c.y < 0.5){
+              return vec4f(c.x, 1-c.x, 0, 1);
+            }  
+            else{
+              return vec4f(1, 0, c.x, 0);
+            }
           }
         `
     });
@@ -102,7 +115,25 @@
         }]
       }
     });
-    ///here///////
+
+    // Create a uniform buffer that describes the grid.
+    const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+    const uniformBuffer = device.createBuffer({
+      label: "Grid Uniforms",
+      size: uniformArray.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+
+    // Create a bind group to pass the grid uniforms into the pipeline
+    const bindGroup = device.createBindGroup({
+      label: "Cell renderer bind group",
+      layout: cellPipeline.getBindGroupLayout(0),
+      entries: [{
+        binding: 0,
+        resource: { buffer: uniformBuffer }
+      }],
+    });
 
     // Clear the canvas with a render pass
     const encoder = device.createCommandEncoder();
@@ -111,21 +142,23 @@
       colorAttachments: [{
         view: context.getCurrentTexture().createView(),
         loadOp: "clear",
-        clearValue: [0.4, 0.1, 0.4, 0.5],
+        clearValue: { r: 0, g: 0, b: 0.4, a: 1.0 },
         storeOp: "store",
       }]
     });
 
-
     // Draw the square.
-    pass.setPipeline(cellPipeline);  //이거 추가됨
-    pass.setVertexBuffer(0, vertexBuffer); //이거 추가됨
-    pass.draw(vertices.length / 2); //이거 추가됨
+    pass.setPipeline(cellPipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.setVertexBuffer(0, vertexBuffer);
 
+    // Draw enough cells to fill the grid
+    const instanceCount = GRID_SIZE * GRID_SIZE;
+    pass.draw(vertices.length / 2, instanceCount);
 
     pass.end();
-    device.queue.submit([encoder.finish()]);
 
+    device.queue.submit([encoder.finish()]);
   </script>
 </body>
 
