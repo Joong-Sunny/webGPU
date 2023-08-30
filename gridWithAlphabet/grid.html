@@ -35,35 +35,38 @@
     });
 
     // Create a buffer with the vertices for a single cell.
-    const vertices = new Float32Array([
-      -0.8, -0.8,
-      0.8, -0.8,
-      0.8, 0.8,
 
-      -0.8, -0.8,
-      0.8, 0.8,
-      -0.8, 0.8,
-    ]);
-    const vertexBuffer = device.createBuffer({
-      label: "Cell vertices",
-      size: vertices.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-    device.queue.writeBuffer(vertexBuffer, 0, vertices);
 
-    const vertexBufferLayout = {
-      arrayStride: 8,
-      attributes: [{
-        format: "float32x2",
-        offset: 0,
-        shaderLocation: 0, // Position. Matches @location(0) in the @vertex shader.
-      }],
-    };
+    function drawGrid(skipCellArray) {
+      const vertices = new Float32Array([
+        -0.9, -0.9,
+        0.9, -0.9,
+        0.9, 0.9,
 
-    // Create the shader that will render the cells.
-    const cellShaderModule = device.createShaderModule({
-      label: "Cell shader",
-      code: `
+        -0.9, -0.9,
+        0.9, 0.9,
+        -0.9, 0.9,
+      ]);
+      const vertexBuffer = device.createBuffer({
+        label: "Cell vertices",
+        size: vertices.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(vertexBuffer, 0, vertices);
+
+      const vertexBufferLayout = {
+        arrayStride: 8,
+        attributes: [{
+          format: "float32x2",
+          offset: 0,
+          shaderLocation: 0, // Position. Matches @location(0) in the @vertex shader.
+        }],
+      };
+
+      // Create the shader that will render the cells.
+      const cellShaderModule = device.createShaderModule({
+        label: "Cell shader",
+        code: `
           struct VertexOutput {
             @builtin(position) position: vec4f,
             @location(0) cell: vec2f,
@@ -80,15 +83,19 @@
             let i = f32(instance);
             let cell = vec2f(i % grid.x, floor(i / grid.x));
 
-            if (cell.x == skipCell.y && cell.y == skipCell.x){
+            if (cell.x == skipCell.x && cell.y == skipCell.y){
               return VertexOutput(vec4f(0,0,0,0), vec2f(0,0));
             }
 
-            for (var i = 0; i < MAX_INSTANCES; i++) {
-              if (cell.x == skipCell.x + f32(i) && cell.y == skipCell.y + f32(i)){
-                return VertexOutput(vec4f(0,0,0,0), vec2f(0,0));
-              }
+            if (cell.x == skipCell.x+1 && cell.y == skipCell.y+1){
+              return VertexOutput(vec4f(0,0,0,0), vec2f(0,0));
             }
+
+            // for (var i = 0; i < MAX_INSTANCES; i++) {
+            //   if (cell.x == skipCell.x + f32(i) && cell.y == skipCell.y + f32(i)){
+            //     return VertexOutput(vec4f(0,0,0,0), vec2f(0,0));
+            //   }
+            // }
 
             let cellOffset = cell / grid * 2;
             let gridPos = (position+1) / grid - 1 + cellOffset;
@@ -102,87 +109,115 @@
           @fragment
           fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
             let c = input.cell / grid;
-            return vec4f( 1-c.x, c.x, 1-c.y, 1);
+            if(skipCell.x < 3){
+              return vec4f(c.x, c.y, 1-c.x, 1);
+            }
+            else if(skipCell.x < 5){
+              return vec4f(c.x *1.1, c.y * 0.9, 1-c.x,0);
+            }
+            else if(skipCell.x < 8){
+              return vec4f(c.x *1.2, c.y * 0.8, 1-c.x, 0);
+            }
+            else if(skipCell.x < 10){
+              return vec4f(c.x * 1.3, c.y * 0.7, 1-c.x, 0);
+            }
+            else if(skipCell.x < 14){
+              return vec4f(c.x *1.2, c.y*0.8, 1-c.x, 0);
+            }
+            return vec4f(c.x, c.y, 1-c.x, 1);
           }
         `
-    });
+      });
 
-    // Create a pipeline that renders the cell.
-    const cellPipeline = device.createRenderPipeline({
-      label: "Cell pipeline",
-      layout: "auto",
-      vertex: {
-        module: cellShaderModule,
-        entryPoint: "vertexMain",
-        buffers: [vertexBufferLayout]
-      },
-      fragment: {
-        module: cellShaderModule,
-        entryPoint: "fragmentMain",
-        targets: [{
-          format: canvasFormat
+      // Create a pipeline that renders the cell.
+      const cellPipeline = device.createRenderPipeline({
+        label: "Cell pipeline",
+        layout: "auto",
+        vertex: {
+          module: cellShaderModule,
+          entryPoint: "vertexMain",
+          buffers: [vertexBufferLayout]
+        },
+        fragment: {
+          module: cellShaderModule,
+          entryPoint: "fragmentMain",
+          targets: [{
+            format: canvasFormat
+          }]
+        }
+      });
+
+      // Create a uniform buffer that describes the grid.
+      const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+      const uniformBuffer = device.createBuffer({
+        label: "Grid Uniforms",
+        size: uniformArray.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+
+      //uniform2
+      const skipCellBuffer = device.createBuffer({
+        label: "Skip Cell Uniforms",
+        size: skipCellArray.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(skipCellBuffer, 0, skipCellArray);
+
+
+      // Create a bind group to pass the grid uniforms into the pipeline
+      const bindGroup = device.createBindGroup({
+        label: "Cell renderer bind group",
+        layout: cellPipeline.getBindGroupLayout(0),
+        entries: [{
+          binding: 0,
+          resource: { buffer: uniformBuffer }
+        },
+        {
+          binding: 1,
+          resource: { buffer: skipCellBuffer } // Skip cell uniform buffer 추가
+        }
+        ],
+      });
+
+      // Clear the canvas with a render pass
+      const encoder = device.createCommandEncoder();
+
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: context.getCurrentTexture().createView(),
+          loadOp: "clear",
+          clearValue: { r: 0.9, g: 0, b: 0, a: 0.1 },
+          storeOp: "store",
         }]
-      }
-    });
+      });
 
-    // Create a uniform buffer that describes the grid.
-    const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
-    const uniformBuffer = device.createBuffer({
-      label: "Grid Uniforms",
-      size: uniformArray.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+      // Draw the square.
+      pass.setPipeline(cellPipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.setVertexBuffer(0, vertexBuffer);
 
-    //uniform2
-    const skipCellArray = new Float32Array([3, 4]); // Skip cell (3, 4)
-    const skipCellBuffer = device.createBuffer({
-      label: "Skip Cell Uniforms",
-      size: skipCellArray.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    device.queue.writeBuffer(skipCellBuffer, 0, skipCellArray);
+      // Draw enough cells to fill the grid
+      const instanceCount = GRID_SIZE * GRID_SIZE;
+      pass.draw(vertices.length / 2, instanceCount);
+
+      pass.end();
+
+      device.queue.submit([encoder.finish()]);
+    }
 
 
-    // Create a bind group to pass the grid uniforms into the pipeline
-    const bindGroup = device.createBindGroup({
-      label: "Cell renderer bind group",
-      layout: cellPipeline.getBindGroupLayout(0),
-      entries: [{
-        binding: 0,
-        resource: { buffer: uniformBuffer }
-      },
-      {
-        binding: 1,
-        resource: { buffer: skipCellBuffer } // Skip cell uniform buffer 추가
-      }
-      ],
-    });
+    const heart = [
+      [7, 11], [8, 11], [9, 12], [10, 12], [11, 13], [12, 13], [13, 12], [14, 11], [14, 10], [14, 9], [13, 8], [12, 7], [12, 6], [11, 5], [10, 4], [9, 3], [8, 3], [7, 3], [6, 4], [5, 5], [4, 6], [3, 7], [2, 8], [1, 9], [1, 10], [1, 11], [1, 12], [2, 13], [3, 14], [4, 14], [5, 13], [6, 13]
+    ]
+    let i = 0;
+    setInterval(() => {
 
-    // Clear the canvas with a render pass
-    const encoder = device.createCommandEncoder();
+      i = (i + 1) % heart.length;
+      const skipCellArray = new Float32Array(heart[i]); // Skip cell (3, 4)
+      drawGrid(skipCellArray);
+    }, 40)
 
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: context.getCurrentTexture().createView(),
-        loadOp: "clear",
-        clearValue: { r: 0, g: 0, b: 0.4, a: 1.0 },
-        storeOp: "store",
-      }]
-    });
-
-    // Draw the square.
-    pass.setPipeline(cellPipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.setVertexBuffer(0, vertexBuffer);
-
-    // Draw enough cells to fill the grid
-    const instanceCount = GRID_SIZE * GRID_SIZE;
-    pass.draw(vertices.length / 2, instanceCount);
-
-    pass.end();
-
-    device.queue.submit([encoder.finish()]);
   </script>
 </body>
 
