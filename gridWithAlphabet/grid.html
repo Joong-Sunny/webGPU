@@ -72,6 +72,8 @@
           @group(0) @binding(0) var<uniform> grid: vec2f;
           @group(0) @binding(1) var<uniform> skipCell: vec2f;
 
+          const MAX_INSTANCES = 8;
+
 
           @vertex
           fn vertexMain(@location(0) position: vec2f, @builtin(instance_index) instance: u32) -> VertexOutput {
@@ -80,6 +82,12 @@
 
             if (cell.x == skipCell.y && cell.y == skipCell.x){
               return VertexOutput(vec4f(0,0,0,0), vec2f(0,0));
+            }
+
+            for (var i = 0; i < MAX_INSTANCES; i++) {
+              if (cell.x == skipCell.x + f32(i) && cell.y == skipCell.y + f32(i)){
+                return VertexOutput(vec4f(0,0,0,0), vec2f(0,0));
+              }
             }
 
             let cellOffset = cell / grid * 2;
